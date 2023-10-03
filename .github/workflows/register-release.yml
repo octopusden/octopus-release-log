@@ -10,6 +10,14 @@ on:
       release-version:
         required: true
         type: string
+  workflow_dispatch:
+    inputs:
+      octopus-module-name:
+        required: true
+        type: string
+      release-version:
+        required: true
+        type: string
 
 permissions:
   contents: write
