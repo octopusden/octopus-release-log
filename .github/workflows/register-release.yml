@@ -18,6 +18,9 @@ on:
       release-version:
         required: true
         type: string
+  repository_dispatch:
+    types: register-release
+
 
 permissions:
   contents: write
@@ -34,11 +37,11 @@ jobs:
 
       - name: Update module file
         run: |
-          echo "Register release ${{ inputs.octopus-module-name }}-${{ inputs.release-version }}"
-          if [[ ! -e ${{ inputs.octopus-module-name }}.txt ]]; then
-            touch ${{ inputs.octopus-module-name }}.txt
+          echo "Register release ${{ github.event.client_payload.octopus-module-name }}-${{ github.event.client_payload.release-version }}"
+          if [[ ! -e ${{ github.event.client_payload.octopus-module-name }}.txt ]]; then
+            touch ${{ github.event.client_payload.octopus-module-name }}.txt
           fi
-          echo "${{ inputs.release-version }}" | cat - ${{ inputs.octopus-module-name }}.txt > temp && mv temp ${{ inputs.octopus-module-name }}.txt
+          echo "${{ github.event.client_payload.release-version }}" | cat - ${{ github.event.client_payload.octopus-module-name }}.txt > temp && mv temp ${{ github.event.client_payload.octopus-module-name }}.txt
 
       - name: Make git commit
         run: |
@@ -46,7 +49,7 @@ jobs:
           git config --local user.name "github-actions[bot]"
           git diff
           git add ${{ inputs.octopus-module-name }}.txt
-          git commit -m"${{ inputs.octopus-module-name }}-${{ inputs.release-version }}"
+          git commit -m"${{ github.event.client_payload.octopus-module-name }}-${{ github.event.client_payload.release-version }}"
           git status
           git config --list
           
