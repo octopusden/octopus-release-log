@@ -1,4 +1,8 @@
 # Action that registers Octopus releases in the release-log
+# Payload should contain two parameters:
+# * octopus-module-name - a name of the Octopus module to register (should match repository name with 'octopusden' prefix) 
+# * release-version - a version to release
+
 name: Register Release
 
 on:
