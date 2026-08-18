@@ -9,11 +9,14 @@ on:
   repository_dispatch:
     types: register-release
 
+concurrency:
+  group: register-release-log
+  cancel-in-progress: false
 
 permissions:
   contents: write
   pull-requests: write
-  
+
 jobs:
   register-release-in-log:
     runs-on: ubuntu-latest
