@@ -74,5 +74,12 @@ jobs:
             echo "Push rejected on attempt $attempt; retrying on top of the latest main"
             sleep $(( attempt + RANDOM % 5 ))
           done
+          # A push can land on main yet still exit nonzero (e.g. the success report is lost).
+          # Earlier attempts catch that on the next iteration; check once more after the last one.
+          git fetch --quiet origin main
+          if git show "origin/main:$file" 2>/dev/null | grep -qxF -- "$VERSION"; then
+            echo "$MODULE-$VERSION is registered (the last push landed)"
+            exit 0
+          fi
           echo "::error::Could not register $MODULE-$VERSION after 10 attempts"
           exit 1
