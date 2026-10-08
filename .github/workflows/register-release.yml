@@ -1,6 +1,6 @@
 # Action that registers Octopus releases in the octopus-release-log
 # Payload should contain two parameters:
-# * octopus-module-name - a name of the Octopus module to register (should match repository name with 'octopusden' prefix) 
+# * octopus-module-name - a name of the Octopus module to register (should match repository name with 'octopusden' prefix)
 # * release-version - a released version to register
 
 name: Register Release
@@ -9,34 +9,77 @@ on:
   repository_dispatch:
     types: register-release
 
+# Deliberately NO workflow-level `concurrency` group: GitHub keeps at most ONE pending run per
+# group and cancels every other pending one, so a burst of simultaneous releases would silently
+# drop registrations. Concurrent runs instead rebuild their commit on top of the latest main and
+# retry the push until it lands (see "Register release").
 
-permissions:
-  contents: write
-  pull-requests: write
-  
+permissions: {}
+
 jobs:
   register-release-in-log:
     runs-on: ubuntu-latest
     environment: Prod
+    permissions:
+      contents: write # commit and push the updated <module>.txt to main
+    env:
+      # Payload values reach the scripts only through env vars, never via ${{ }} inside `run`,
+      # so they cannot inject shell code.
+      MODULE: ${{ github.event.client_payload.octopus-module-name }}
+      VERSION: ${{ github.event.client_payload.release-version }}
 
     steps:
+      - name: Validate payload
+        run: |
+          # MODULE becomes a file name and VERSION a line in it: reject anything that could
+          # escape the repository root or break the one-version-per-line format.
+          if [[ ! "$MODULE" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+            echo "::error::Invalid octopus-module-name: '$MODULE'"
+            exit 1
+          fi
+          if [[ ! "$VERSION" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ ]]; then
+            echo "::error::Invalid release-version: '$VERSION'"
+            exit 1
+          fi
+
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Update module file
+      - name: Register release
         run: |
-          echo "Register release ${{ github.event.client_payload.octopus-module-name }}-${{ github.event.client_payload.release-version }}"
-          if [[ ! -e ${{ github.event.client_payload.octopus-module-name }}.txt ]]; then
-            touch ${{ github.event.client_payload.octopus-module-name }}.txt
-          fi
-          echo "${{ github.event.client_payload.release-version }}" | cat - ${{ github.event.client_payload.octopus-module-name }}.txt > temp && mv temp ${{ github.event.client_payload.octopus-module-name }}.txt
-
-      - name: Make git commit
-        run: |
+          set -euo pipefail
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
-          git add ${{ github.event.client_payload.octopus-module-name }}.txt
-          git commit -m"${{ github.event.client_payload.octopus-module-name }}-${{ github.event.client_payload.release-version }}"
-          
-      - name: Push changes
-        uses: ad-m/github-push-action@master
+          file="$MODULE.txt"
+          echo "Register release $MODULE-$VERSION"
+          for attempt in $(seq 1 10); do
+            # Start every attempt from the latest main, so a push rejected because another
+            # module's run got there first is simply redone on top of it.
+            git fetch --quiet origin main
+            git reset --quiet --hard origin/main
+            touch "$file"
+            if grep -qxF -- "$VERSION" "$file"; then
+              # Idempotent: a re-sent dispatch (or a manual re-registration) adds no duplicate.
+              echo "$MODULE-$VERSION is already registered"
+              exit 0
+            fi
+            { echo "$VERSION"; cat "$file"; } > "$file.tmp"
+            mv "$file.tmp" "$file"
+            git add "$file"
+            git commit --quiet -m "$MODULE-$VERSION"
+            if git push --quiet origin HEAD:main; then
+              echo "Registered $MODULE-$VERSION (attempt $attempt)"
+              exit 0
+            fi
+            echo "Push rejected on attempt $attempt; retrying on top of the latest main"
+            sleep $(( attempt + RANDOM % 5 ))
+          done
+          # A push can land on main yet still exit nonzero (e.g. the success report is lost).
+          # Earlier attempts catch that on the next iteration; check once more after the last one.
+          git fetch --quiet origin main
+          if git show "origin/main:$file" 2>/dev/null | grep -qxF -- "$VERSION"; then
+            echo "$MODULE-$VERSION is registered (the last push landed)"
+            exit 0
+          fi
+          echo "::error::Could not register $MODULE-$VERSION after 10 attempts"
+          exit 1
