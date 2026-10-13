@@ -76,8 +76,11 @@ jobs:
           done
           # A push can land on main yet still exit nonzero (e.g. the success report is lost).
           # Earlier attempts catch that on the next iteration; check once more after the last one.
+          # Check the checked-out file, not `git show | grep -q`: grep exits on the first match,
+          # git show then dies of SIGPIPE, and pipefail turns a found version into a failure.
           git fetch --quiet origin main
-          if git show "origin/main:$file" 2>/dev/null | grep -qxF -- "$VERSION"; then
+          git reset --quiet --hard origin/main
+          if [[ -f "$file" ]] && grep -qxF -- "$VERSION" "$file"; then
             echo "$MODULE-$VERSION is registered (the last push landed)"
             exit 0
           fi
